@@ -14,6 +14,7 @@ from werkzeug.wsgi import SharedDataMiddleware
 
 class Field(object):
     """Generic property field. Constructor argument is default value"""
+    doc = "property"
     def __init__(self, value=None):
         self.value = value
 
@@ -87,22 +88,28 @@ class CallableField(Field):
     If `v` is a list (JSON Array), the function is called with positional arguments.
     If `v` is a dict (JSON Object), the function is called with keyword arguments.
     """
+    doc = "callable"
     def __init__(self, fn):
         self.value = fn
+        self.retval = None
 
     def parse(self, obj, data=None):
         # Call function on data
+        # Save return value for next time it is exported
         if data is None:
-            self.value(obj)
+            self.retval = self.value(obj)
         elif isinstance(data, list):
-            self.value(obj, *data)
+            self.retval = self.value(obj, *data)
         elif isinstance(data, dict):
-            self.value(obj, **data)
-        raise ValueError("Unable to call function. Argument must be a list, a dict, or None")
+            self.retval = self.value(obj, **data)
+        else:
+            raise ValueError("Unable to call function. Argument must be a list, a dict, or None")
 
     def export(self, obj):
-        # Nothing to export; Only callable
-        return "__callable__"
+        # Export the last return value from the called function
+        # This is a little awkward, but it works
+        # XXX: Should the retval be destroyed on read?
+        return self.retval
 
 class JSONField(Field):
     """Property field that serializes value with JSON."""
@@ -111,10 +118,12 @@ class JSONField(Field):
 class BladeMeta(type):
     """Metaclass which keeps track of Fields to expose over HTTP"""
     fields = {}
+    references = {}
 
     def __new__(meta, name, bases, dct):
         if name not in meta.references:
             meta.fields[name] = {}
+            meta.references[name] = {}
 
         for key, val in dct.items():
             if isinstance(val, Field):
@@ -172,13 +181,23 @@ class Root(object):
         if request.method == "GET":
             return self.dump(classname, cid)
         elif request.method == "POST":
-            pass
+            print "LOADING"
+            try:
+                data = json.loads(request.data)
+            except ValueError:
+                print "Error parsing data"
+                raise
+            return self.load(classname, cid, data)
 
-    def app_class(self, reqeust, classname):
+    def app_class(self, request, classname):
         return self.list_objects(classname)
 
     def app_all(self, request):
-        return self.list_objects()
+        # Discovery 
+        output = {}
+        for classname, fields in BladeMeta.fields.items():
+            output[classname] = {f: d.doc for f, d in fields.items()}
+        return output
 
     def list_objects(self, classname=None):
         if classname is None:
@@ -202,11 +221,14 @@ class Root(object):
     def load(self, classname, cid, data):
         # Set the JSON that changed
         # cid = data["_id"] #???
-        obj = self.references[classname][cid]
+        obj = BladeMeta.references[classname][cid]
+        print 'data', data
+        print 'bm', BladeMeta.fields[classname]
         for key, value in data.items():
             if key in BladeMeta.fields[classname]:
                 field = BladeMeta.fields[classname][key]
                 field.parse(obj, value)
+        return self.dump(classname, cid)
 
 def run(app, host="127.0.0.1", port=8080):
     app.wsgi_app = SharedDataMiddleware(app.wsgi_app, {
@@ -225,7 +247,6 @@ class Timing(Blade):
 
     @PropertyField
     def deltas(self):
-        self.times.append(time.time())
         return map(lambda x, y: x - y, self.times[:-1], self.times[1:])
 
 

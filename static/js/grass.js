@@ -1,55 +1,103 @@
-var Blade = Backbone.Model.extend({
-    idAttribute: "_id",
-    initialize: function(){
+var makeBladeModel = function(type, typeData){
+    var properties = _.chain(typeData).pairs().map(function(x){ return x[1] == "property" ? x[0] : null }).compact().value();
+    properties.push("_id");
+    var callables = _.chain(typeData).pairs().map(function(x){ return x[1] == "callable" ? x[0] : null }).compact().value();
 
-    },
-});
+    return Backbone.Model.extend({
+        idAttribute: "_id",
+        properties: properties,
+        callables: callables,
+        type: type,
+        url: function(){
+            return "/root/" + type + "/" + this.id;
+        },
+        parse: function(response, options){
+            // Only save properties, not callables
+            return _.pick(response, properties);
+        },
+        toJSON: function(options){
+            // Only send properties to server, not callables
+            return _.pick(this.attributes, properties);
+        },
+        call: function(key, args, options){
+            // A combination of `.set` and `.fetch`
+            var self = this;
+            if(!_.contains(callables, key)){
+                throw "Unable to call; function '" + key + "' does not exist.";
+            }
+            if(args === void 0){
+                args = null;
+            }
 
-var Blades = Backbone.Collection.extend({
-    model: Blade,
-    initialize: function(type){
-        this.type = type;
-        this.url = "/root/" + type;
-    }
-});
+            var options = options ? _.clone(options) : {};
+            var success = options.success;
+            var data = {};
+            data[key] = args;
+            var params = {
+                data: JSON.stringify(data),
+                contentType: "application/json",
+                success: function(response){
+                    if (!self.set(self.parse(response, options), options)) return false;
+                    if (success) success(self, response, options);
+                    self.trigger('sync', self, response, options);
+                    self.trigger('called:' + key, self, response[key], options);
+                }
+            };
+            this.sync('create', this, _.defaults(params, options));
+        },
+        initialize: function(){
+
+        }
+    });
+}
+
+var makeBladeCollection = function(type, typeData, model){
+    return Backbone.Collection.extend({
+        model: model,
+        url: "/root/" + type,
+        type: type,
+        initialize: function(){
+        }
+    });
+}
 
 var Root = Backbone.Model.extend({
     url: "/root",
-    collections: [],
-    parse: function(response, options){
-        var resp = {};
+    Collections: {},
+    Models: {},
+    initialize: function(){
         var self = this;
-        _.each(response, function(r){
-            resp[r] = r;
+        this.listenToOnce(this, "change", function(model, options){
+            console.log("first change", model.attributes);
+            _.each(model.keys(), function(name){
+                var mdl = self.Models[name] = makeBladeModel(name, model.get(name));
+                self.Collections[name] = makeBladeCollection(name, model.get(name), mdl);
+            });
+
+            // Next time the model changes, that's bad!
+            this.listenTo(this, "change", function(model, options){
+                // This isn't good!
+                console.log("Uh oh, model changed types!", model);
+                Backbone.trigger("typeChange");
+                // Maybe fire an event for the particular attrs that changed?
+            });
+
+            Backbone.trigger("typesLoaded", this);
         });
-        return resp;
-    },
-    set: function(key, val, options) {
-        if (key == null) return this;
-
-        // Handle both `"key", value` and `{key: value}` -style arguments.
-        if (typeof key === 'object') {
-            attrs = key;
-            options = val;
-        } else {
-            (attrs = {})[key] = val;
-        }
-        
-        for(attr in attrs){
-            if(this.has(attr)){
-                this.get(attr).fetch();
-            }else{
-                var blades = new Blades(attrs[attr]);
-                blades.fetch();
-                Backbone.Model.prototype.set.apply(this, [attr, blades, options]);
-            }
-        }
     }
-
-
 });
 
 var root = new Root();
 root.fetch();
-run = function(){t.fetch({success: function(a){ a.fetch({success: function(b){ if(c){run();} }}); }});}
+Backbone.listenToOnce(Backbone, "typesLoaded", function(root){
+    Timings = new root.Collections.Timing;
+
+    Backbone.listenTo(Timings, "add", function(model){
+        t = model;
+    });
+
+    Timings.fetch();
+});
+
+//run = function(){t.fetch({success: function(a){ a.fetch({success: function(b){ if(c){run();} }}); }});}
 
