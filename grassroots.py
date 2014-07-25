@@ -94,35 +94,15 @@ class JSONField(Field):
     pass
 
 class BladeMeta(type):
-    references = {}
     fields = {}
-    actions = {}
 
     def __new__(meta, name, bases, dct):
         if name not in meta.references:
-            meta.references[name] = {}
             meta.fields[name] = {}
-            meta.actions[name] = {}
 
         for key, val in dct.items():
-            if key.startswith("_"): # Skip _methods & __methods__
-                continue
             if isinstance(val, Field):
-                fcls, getter, setter = meta.fields[name].get(key, (None, None, None))
-                meta.fields[name][key] = (val, getter, setter)
-
-            prefix, _, rest = key.partition("_")
-            if prefix == "get":
-                # Field get
-                fcls, getter, setter = meta.fields[name].get(rest, (None, None, None))
-                meta.fields[name][rest] = (fcls, val, setter)
-            elif prefix == "set":
-                # Field set
-                fcls, getter, setter = meta.fields[name].get(rest, (None, None, None))
-                meta.fields[name][rest] = (fcls, getter, val)
-            elif prefix == "call":
-                # Action
-                meta.actions[name][rest] = val
+                meta.fields[name][key] = val
 
         return super(BladeMeta, meta).__new__(meta, name, bases, dct)
 
@@ -197,20 +177,8 @@ class Root(object):
         output = {}
         #for key, value in self.references[classname][cid].__dict__.items():
         obj = BladeMeta.references[classname][cid]
-        for field, (fcls, getter, setter) in BladeMeta.fields[classname].items():
-            if fcls is not None:
-                #output[field] = fcls.to_native(obj)
-                #output[field] = obj.__dict__[field].export()
-                output[field] = fcls.export(obj)
-            elif getter is not None:
-                output[field] = getter(obj)
-            elif setter is not None:
-                output[field] = "<write_only>"
-            else:
-                continue
-        for field, action in BladeMeta.actions[classname].items():
-            if action is not None:
-                output[field] = "<function>"
+        for fieldname, field in BladeMeta.fields[classname].items():
+            output[fieldname] = field.export(obj)
         output["_id"] = cid
         return output  
     
@@ -220,16 +188,8 @@ class Root(object):
         obj = self.references[classname][cid]
         for key, value in data.items():
             if key in BladeMeta.fields[classname]:
-                fcls, getter, setter = BladeMeta.fields[classname][key]
-                if fcls is not None:
-                    #fcls.from_native(value)
-                    #obj.__dict__[key].parse(vaLue)
-                    fcls.parse(obj, value)
-                elif setter is not None:
-                    setter(obj, value)
-            elif key in BladeMeta.actions[classname]:
-                action = BladeMeta.actions[classname]
-                action(obj, **value)
+                field = BladeMeta.fields[classname][key]
+                field.parse(obj, value)
 
 def run(app, host="127.0.0.1", port=8080):
     app.wsgi_app = SharedDataMiddleware(app.wsgi_app, {
