@@ -8,7 +8,12 @@ from werkzeug.routing import Map, Rule
 from werkzeug.wrappers import Request, Response
 from werkzeug.wsgi import SharedDataMiddleware
 
+#
+# Fields. Expose values & functions over HTTP
+# 
+
 class Field(object):
+    """Generic property field. Constructor argument is default value"""
     def __init__(self, value=None):
         self.value = value
 
@@ -21,13 +26,15 @@ class Field(object):
         self.value = value
 
     def parse(self, obj, data):
+        """Redefine `parse` to change the way the value is deserialized (from JSON)"""
         self.value = data
 
     def export(self, obj):
+        """Redefine `export` to change the way the value is serialized (before being serialized to JSON)"""
         return self.value
 
 class PropertyField(Field):
-    """ Emulate property() behavior as a field """
+    """Emulate property() behavior as a field"""
     def __init__(self, fget=None, fset=None, fdel=None, doc=None):
         self.fget = fget
         self.fset = fset
@@ -73,6 +80,13 @@ class PropertyField(Field):
         return self.fget(obj)
 
 class CallableField(Field):
+    """Turn a function into a (write-only) field
+    
+    If the field is 'set' to `v`, then the function is called using `v` for arguments.
+    If `v` is None, the function is called without arguments.
+    If `v` is a list (JSON Array), the function is called with positional arguments.
+    If `v` is a dict (JSON Object), the function is called with keyword arguments.
+    """
     def __init__(self, fn):
         self.value = fn
 
@@ -88,12 +102,14 @@ class CallableField(Field):
 
     def export(self, obj):
         # Nothing to export; Only callable
-        return None
+        return "__callable__"
 
 class JSONField(Field):
+    """Property field that serializes value with JSON."""
     pass
 
 class BladeMeta(type):
+    """Metaclass which keeps track of Fields to expose over HTTP"""
     fields = {}
 
     def __new__(meta, name, bases, dct):
@@ -115,10 +131,11 @@ class BladeMeta(type):
         return obj
 
 class Blade(object):
+    """Subclass this to export Fields"""
     __metaclass__ = BladeMeta
 
-
 class Root(object):
+    """Webserver """
     def __init__(self):
         self.references = collections.defaultdict(dict)
         self.ordering = {}
@@ -197,26 +214,9 @@ def run(app, host="127.0.0.1", port=8080):
     })
     run_simple(host, port, app, use_debugger=True, use_reloader=True)
 
-class A(object):
-    def __init__(self):
-        self.a = 1
-        self.b = 2
-
-    def c(self):
-        self.a = 0
-
-    def d(self, d):
-        self.b = d
-
-    def eget(self):
-        print "E", self._e
-        return self._e
-    
-    def eset(self, _e):
-        self._e = _e
-    e = property(eget, eset)
 
 class Timing(Blade):
+    """Test class"""
     times = Field([])
 
     @CallableField
