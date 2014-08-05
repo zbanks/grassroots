@@ -37,10 +37,11 @@ var makeBladeModel = function(type, typeData){
                 data: JSON.stringify(data),
                 contentType: "application/json",
                 success: function(response){
+                    var retval = response[key];
                     if (!self.set(self.parse(response, options), options)) return false;
-                    if (success) success(self, response, options);
+                    if (success) success(self, retval, options);
                     self.trigger('sync', self, response, options);
-                    self.trigger('called:' + key, self, response[key], options);
+                    self.trigger('called:' + key, self, retval, options);
                 }
             };
             this.sync('create', this, _.defaults(params, options));
@@ -82,14 +83,14 @@ var Root = Backbone.Model.extend({
                 // Maybe fire an event for the particular attrs that changed?
             });
 
-            Backbone.trigger("typesLoaded", this);
+            this.trigger("typesLoaded");
         });
     }
 });
 
 var root = new Root();
 root.fetch();
-Backbone.listenToOnce(Backbone, "typesLoaded", function(root){
+Backbone.listenToOnce(root, "typesLoaded", function(){
     Timings = new root.Collections.Timing;
 
     Backbone.listenTo(Timings, "add", function(model){

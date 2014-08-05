@@ -1,13 +1,14 @@
 import collections
 import json
 import os
-import time
+import uuid
 
 from werkzeug.serving import run_simple
 from werkzeug.routing import Map, Rule
 from werkzeug.wrappers import Request, Response
 from werkzeug.wsgi import SharedDataMiddleware
 
+__all__ = ("Field", "PropertyField", "CallableField", "JSONField", "Blade", "Root", "run")
 #
 # Fields. Expose values & functions over HTTP
 # 
@@ -71,14 +72,14 @@ class PropertyField(Field):
         return type(self)(self.fget, self.fset, fdel, self.__doc__)
 
     def parse(self, obj, data):
-        if self.fset is None:
-            raise AttributeError("can't set attribute")
-        self.fset(obj, data)
+        # Be a bit more leinient with what we accept here
+        if self.fset is not None:
+            self.fset(obj, data)
 
     def export(self, obj):
-        if self.fget is None:
-            raise AttributeError("unreadable attribute")
-        return self.fget(obj)
+        # Be a bit more leinient with what we accept here
+        if self.fget is not None:
+            return self.fget(obj)
 
 class CallableField(Field):
     """Turn a function into a (write-only) field
@@ -119,15 +120,17 @@ class BladeMeta(type):
     """Metaclass which keeps track of Fields to expose over HTTP"""
     fields = {}
     references = {}
+    abstracts = {"Blade"}
 
     def __new__(meta, name, bases, dct):
-        if name not in meta.references:
-            meta.fields[name] = {}
-            meta.references[name] = {}
+        if name not in meta.abstracts:
+            if name not in meta.references:
+                meta.fields[name] = {}
+                meta.references[name] = {}
 
-        for key, val in dct.items():
-            if isinstance(val, Field):
-                meta.fields[name][key] = val
+            for key, val in dct.items():
+                if isinstance(val, Field):
+                    meta.fields[name][key] = val
 
         return super(BladeMeta, meta).__new__(meta, name, bases, dct)
 
@@ -136,7 +139,10 @@ class BladeMeta(type):
 
     def __call__(cls, *args, **kwargs):
         obj = super(BladeMeta, cls).__call__(*args, **kwargs)
-        cls.references[obj.__class__.__name__][id(obj)] = obj
+        #TODO: is there a better way of getting this?
+        classname = obj.__class__.__name__
+        if classname not in cls.abstracts:
+            cls.references[classname][id(obj)] = obj
         return obj
 
 class Blade(object):
@@ -148,6 +154,7 @@ class Root(object):
     def __init__(self):
         self.references = collections.defaultdict(dict)
         self.ordering = {}
+        self.uuid = uuid.uuid4() #TODO: is this the right kind?
 
         self.url_map = Map([
             Rule("/root/<classname>/<cid>", endpoint="object"),
@@ -163,13 +170,16 @@ class Root(object):
             try:
                 json_resp = getattr(self, "app_" + endpoint)(request, **values)
             except Exception as e:
+                # TODO: clean up error handling
                 json_resp = {"success": False, "error": str(e)}
                 raise
         except:
             json_resp = {"success": False, "error": "404"}
             raise
 
-        response = Response(json.dumps(json_resp), mimetype="application/json")
+        headers = {"X-Server-UUID": self.uuid}
+
+        response = Response(json.dumps(json_resp), mimetype="application/json", headers=headers)
 
         return response(environ, start_response)
 
@@ -180,8 +190,7 @@ class Root(object):
         cid = int(cid)
         if request.method == "GET":
             return self.dump(classname, cid)
-        elif request.method == "POST":
-            print "LOADING"
+        elif request.method in {"POST", "PUT"}:
             try:
                 data = json.loads(request.data)
             except ValueError:
@@ -237,23 +246,3 @@ def run(app, host="127.0.0.1", port=8080):
     run_simple(host, port, app, use_debugger=True, use_reloader=True)
 
 
-class Timing(Blade):
-    """Test class"""
-    times = Field([])
-
-    @CallableField
-    def time(self):
-        self.times.append(time.time())
-
-    @PropertyField
-    def deltas(self):
-        return map(lambda x, y: x - y, self.times[:-1], self.times[1:])
-
-
-
-
-
-if __name__ == "__main__":
-    root = Root()
-    tm = Timing()
-    run(root)
