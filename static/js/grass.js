@@ -90,14 +90,17 @@ var Root = Backbone.Model.extend({
 
 var root = new Root();
 root.fetch();
+
 Backbone.listenToOnce(root, "typesLoaded", function(){
-    Timings = new root.Collections.Timing;
+    if(root.Collections.Timing){
+        Timings = new root.Collections.Timing;
 
-    Backbone.listenTo(Timings, "add", function(model){
-        t = model;
+        Backbone.listenTo(Timings, "add", function(model){
+            t = model;
+        });
+
+        Timings.fetch();
     });
-
-    Timings.fetch();
 });
 
 //run = function(){t.fetch({success: function(a){ a.fetch({success: function(b){ if(c){run();} }}); }});}
