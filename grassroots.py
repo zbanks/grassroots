@@ -1,10 +1,12 @@
 import collections
 import json
+import logging
 import os
 import uuid
 
-from werkzeug.serving import run_simple
+from werkzeug.exceptions import NotFound
 from werkzeug.routing import Map, Rule
+from werkzeug.serving import run_simple
 from werkzeug.wrappers import Request, Response
 from werkzeug.wsgi import SharedDataMiddleware
 
@@ -16,6 +18,7 @@ __all__ = ("Field", "PropertyField", "CallableField", "JSONField", "Blade", "Roo
 class Field(object):
     """Generic property field. Constructor argument is default value"""
     doc = "property"
+    nested = False
     def __init__(self, value=None):
         self.value = value
 
@@ -116,6 +119,61 @@ class JSONField(Field):
     """Property field that serializes value with JSON."""
     pass
 
+class ProxyField(Field):
+    """ This might not be nessassary..."""
+    def parse(self, obj, data=None):
+        self.value = self.value.parse(obj, data=data)
+
+    def export(self, obj):
+        return self.value.export(obj)
+
+class BladeListField(Field):
+    """Field that is a list of Blades of a particular type"""
+    doc = "property-nested"
+    def __init__(self, bladecls):
+        self.bladecls = bladecls
+        self.value = []
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        return self.value
+
+    def __set__(self, obj, value):
+        if not all([type(v).__name__ == self.bladecls for v in value]):
+            raise ValueError
+        self.value = value
+
+    def parse(self, obj, data):
+        self.value = [self.meta.references[self.bladecls][v] for v in data]
+
+    def export(self, obj):
+        return {"__class__": self.bladecls, "__data__": map(id, self.value)}
+
+class BladeDictField(Field):
+    """Field that is a dict of Blades of a particular type"""
+    doc = "property-nested"
+    def __init__(self, bladecls):
+        self.bladecls = bladecls
+        self.value = {}
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        return self.value
+
+    def __set__(self, obj, value):
+        if not all([type(v).__name__ == self.bladecls for v in value.values()]):
+            raise ValueError
+        self.value = value
+
+    def parse(self, obj, data):
+        self.value = {k: self.meta.references[self.bladecls][v] for k, v in data.items()}
+
+    def export(self, obj):
+        return {"__class__": self.bladecls, "__data__": {k: id(v) for k, v in self.value.items()}}
+
+
 class BladeMeta(type):
     """Metaclass which keeps track of Fields to expose over HTTP"""
     fields = {}
@@ -130,6 +188,7 @@ class BladeMeta(type):
 
             for key, val in dct.items():
                 if isinstance(val, Field):
+                    val.meta = meta
                     meta.fields[name][key] = val
 
         return super(BladeMeta, meta).__new__(meta, name, bases, dct)
@@ -166,7 +225,10 @@ class Root(object):
         request = Request(environ)
         adapter = self.url_map.bind_to_environ(environ)
         try:
-            endpoint, values = adapter.match()
+            try:
+                endpoint, values = adapter.match()
+            except NotFound:
+                return ""
             try:
                 json_resp = getattr(self, "app_" + endpoint)(request, **values)
             except Exception as e:
@@ -240,9 +302,12 @@ class Root(object):
         return self.dump(classname, cid)
 
 def run(app, host="127.0.0.1", port=8080):
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.CRITICAL)
     app.wsgi_app = SharedDataMiddleware(app.wsgi_app, {
-        '/static': os.path.join(os.path.dirname(__file__), 'static')
+        #'/static': os.path.join(os.path.dirname(__file__), 'static')
+        '/static': os.path.abspath('static')
     })
-    run_simple(host, port, app, use_debugger=True, use_reloader=True)
+    run_simple(host, port, app, use_debugger=True, use_reloader=False)
 
 

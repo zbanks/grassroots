@@ -2,22 +2,51 @@ var makeBladeModel = function(type, typeData){
     var properties = _.chain(typeData).pairs().map(function(x){ return x[1] == "property" ? x[0] : null }).compact().value();
     properties.push("_id");
     var callables = _.chain(typeData).pairs().map(function(x){ return x[1] == "callable" ? x[0] : null }).compact().value();
+    var nested = _.chain(typeData).pairs().map(function(x){ return x[1] == "property-nested" ? x[0] : null }).compact().value();
 
     return Backbone.Model.extend({
         idAttribute: "_id",
         properties: properties,
         callables: callables,
+        nestedProperties: nested,
         type: type,
         url: function(){
             return "/root/" + type + "/" + this.id;
         },
         parse: function(response, options){
             // Only save properties, not callables
-            return _.pick(response, properties);
+            // Pull out nested relationships
+            var plain =_.pick(response, properties);
+            var nest = _.pick(response, nested);
+            _.each(nest, function(value, key, obj){
+                var col = root.all.get(value.__class__);
+                var data = value.__data__;
+                var lookup = function(id){
+                    if(col.contains(id)){
+                        return col.get(id);
+                    }else{
+                        return col.create({"_id": id});
+                    }
+                }
+                if(_.isArray(data)){
+                    nest[key] = _.map(data, lookup);
+                }else if(_.isObject(data)){
+                    var output = {};
+                    _.map(data, function(v, k, obj){
+                        output[k] = lookup(v);
+                    });
+                    nest[key] = output;
+                }else{
+                    console.warn("Invalid data type", data);
+                }
+            });
+            return _.extend(plain, nest);
         },
         toJSON: function(options){
             // Only send properties to server, not callables
-            return _.pick(this.attributes, properties);
+            var plain =_.pick(this.attributes, properties);
+            var nest = _.pick(this.attributes, nested);
+            return plain; // TODO
         },
         call: function(key, args, options){
             // A combination of `.set` and `.fetch`
@@ -68,11 +97,13 @@ var Root = Backbone.Model.extend({
     Models: {},
     initialize: function(){
         var self = this;
+        this.all = new Backbone.Model();
         this.listenToOnce(this, "change", function(model, options){
             console.log("first change", model.attributes);
             _.each(model.keys(), function(name){
                 var mdl = self.Models[name] = makeBladeModel(name, model.get(name));
                 self.Collections[name] = makeBladeCollection(name, model.get(name), mdl);
+                self.all.set(name, new self.Collections[name]);
             });
 
             // Next time the model changes, that's bad!
@@ -88,9 +119,14 @@ var Root = Backbone.Model.extend({
     }
 });
 
-var root = new Root();
-root.fetch();
 
+var root = new Root();
+$(function(){
+    console.log('r', root);
+    root.fetch();
+});
+
+/*
 Backbone.listenToOnce(root, "typesLoaded", function(){
     if(root.Collections.Timing){
         Timings = new root.Collections.Timing;
@@ -100,8 +136,9 @@ Backbone.listenToOnce(root, "typesLoaded", function(){
         });
 
         Timings.fetch();
-    });
+    }
 });
+*/
 
 //run = function(){t.fetch({success: function(a){ a.fetch({success: function(b){ if(c){run();} }}); }});}
 
