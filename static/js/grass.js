@@ -2,54 +2,22 @@ var makeBladeModel = function(type, typeData){
     var properties = _.chain(typeData).pairs().map(function(x){ return x[1] == "property" ? x[0] : null }).compact().value();
     properties.push("_id");
     var callables = _.chain(typeData).pairs().map(function(x){ return x[1] == "callable" ? x[0] : null }).compact().value();
-    var nested = _.chain(typeData).pairs().map(function(x){ return x[1] == "property-nested" ? x[0] : null }).compact().value();
 
     return Backbone.Model.extend({
         idAttribute: "_id",
         properties: properties,
         callables: callables,
-        nestedProperties: nested,
         type: type,
         url: function(){
             return "/root/" + type + "/" + this.id;
         },
         parse: function(response, options){
             // Only save properties, not callables
-            // Pull out nested relationships
-            var self = this;
-            var plain =_.pick(response, properties);
-            var nest = _.pick(response, nested);
-            _.each(nest, function(value, key, obj){
-                var col = root.all.get(value.__class__);
-                var data = value.__data__;
-                var lookup = function(id, idx){
-                    if(col.contains(id)){
-                        return col.get(id);
-                    }else{
-                        return col.create({"_id": id});
-                    }
-                }
-                if(_.isArray(data)){
-                    nest[key] = _.map(data, lookup);
-                    nest[key + "__raw"] = value;
-                }else if(_.isObject(data)){
-                    var output = {};
-                    _.map(data, function(v, k, obj){
-                        output[k] = lookup(v, k);
-                    });
-                    nest[key] = output;
-                    nest[key + "__raw"] = value;
-                }else{
-                    console.warn("Invalid data type", data);
-                }
-            });
-            return _.extend(plain, nest);
+            return _.pick(response, properties);
         },
         toJSON: function(options){
             // Only send properties to server, not callables
-            var plain =_.pick(this.attributes, properties);
-            var nest = _.pick(this.attributes, nested);
-            return plain; // TODO
+            return _.pick(this.attributes, properties);
         },
         call: function(key, args, options){
             // A combination of `.set` and `.fetch`

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import uuid
+import weakref
 
 from werkzeug.exceptions import NotFound
 from werkzeug.routing import Map, Rule
@@ -18,25 +19,25 @@ __all__ = ("Field", "PropertyField", "CallableField", "JSONField", "Blade", "Roo
 class Field(object):
     """Generic property field. Constructor argument is default value"""
     doc = "property"
-    nested = False
-    def __init__(self, value=None):
-        self.value = value
+    def __init__(self, default=None):
+        self.default = default
+        self.data = weakref.WeakKeyDictionary()
 
     def __get__(self, obj, objtype=None):
         if obj is None:
             return self
-        return self.value
+        return self.data.get(obj, self.default)
 
     def __set__(self, obj, value):
-        self.value = value
+        self.data[obj] = value
 
     def parse(self, obj, data):
         """Redefine `parse` to change the way the value is deserialized (from JSON)"""
-        self.value = data
+        self.data[obj]= data
 
     def export(self, obj):
         """Redefine `export` to change the way the value is serialized (before being serialized to JSON)"""
-        return self.value
+        return self.data.get(obj, self.default)
 
 class PropertyField(Field):
     """Emulate property() behavior as a field"""
@@ -95,17 +96,17 @@ class CallableField(Field):
     doc = "callable"
     def __init__(self, fn):
         self.value = fn
-        self.retval = None
+        self.retvals = weakref.WeakKeyDictionary()
 
     def parse(self, obj, data=None):
         # Call function on data
         # Save return value for next time it is exported
         if data is None:
-            self.retval = self.value(obj)
+            self.retvals[obj] = self.value(obj)
         elif isinstance(data, list):
-            self.retval = self.value(obj, *data)
+            self.retvals[obj] = self.value(obj, *data)
         elif isinstance(data, dict):
-            self.retval = self.value(obj, **data)
+            self.retvals[obj] = self.value(obj, **data)
         else:
             raise ValueError("Unable to call function. Argument must be a list, a dict, or None")
 
@@ -113,20 +114,13 @@ class CallableField(Field):
         # Export the last return value from the called function
         # This is a little awkward, but it works
         # XXX: Should the retval be destroyed on read?
-        return self.retval
+        return self.retvals.get(obj, None)
 
 class JSONField(Field):
     """Property field that serializes value with JSON."""
     pass
 
-class ProxyField(Field):
-    """ This might not be nessassary..."""
-    def parse(self, obj, data=None):
-        self.value = self.value.parse(obj, data=data)
-
-    def export(self, obj):
-        return self.value.export(obj)
-
+#XXX - DEPRICATED
 class BladeListField(Field):
     """Field that is a list of Blades of a particular type"""
     doc = "property-nested"
@@ -149,30 +143,6 @@ class BladeListField(Field):
 
     def export(self, obj):
         return {"__class__": self.bladecls, "__data__": map(id, self.value)}
-
-class BladeDictField(Field):
-    """Field that is a dict of Blades of a particular type"""
-    doc = "property-nested"
-    def __init__(self, bladecls):
-        self.bladecls = bladecls
-        self.value = {}
-
-    def __get__(self, obj, objtype=None):
-        if obj is None:
-            return self
-        return self.value
-
-    def __set__(self, obj, value):
-        if not all([type(v).__name__ == self.bladecls for v in value.values()]):
-            raise ValueError
-        self.value = value
-
-    def parse(self, obj, data):
-        self.value = {k: self.meta.references[self.bladecls][v] for k, v in data.items()}
-
-    def export(self, obj):
-        return {"__class__": self.bladecls, "__data__": {k: id(v) for k, v in self.value.items()}}
-
 
 class BladeMeta(type):
     """Metaclass which keeps track of Fields to expose over HTTP"""
