@@ -16,12 +16,13 @@ var makeBladeModel = function(type, typeData){
         parse: function(response, options){
             // Only save properties, not callables
             // Pull out nested relationships
+            var self = this;
             var plain =_.pick(response, properties);
             var nest = _.pick(response, nested);
             _.each(nest, function(value, key, obj){
                 var col = root.all.get(value.__class__);
                 var data = value.__data__;
-                var lookup = function(id){
+                var lookup = function(id, idx){
                     if(col.contains(id)){
                         return col.get(id);
                     }else{
@@ -30,12 +31,14 @@ var makeBladeModel = function(type, typeData){
                 }
                 if(_.isArray(data)){
                     nest[key] = _.map(data, lookup);
+                    nest[key + "__raw"] = value;
                 }else if(_.isObject(data)){
                     var output = {};
                     _.map(data, function(v, k, obj){
-                        output[k] = lookup(v);
+                        output[k] = lookup(v, k);
                     });
                     nest[key] = output;
+                    nest[key + "__raw"] = value;
                 }else{
                     console.warn("Invalid data type", data);
                 }
