@@ -151,10 +151,10 @@ class BladeMeta(type):
     abstracts = {"Blade"}
 
     def __new__(meta, name, bases, dct):
-        if name not in meta.abstracts:
-            if name not in meta.references:
-                meta.fields[name] = {}
-                meta.references[name] = {}
+        # On reload, only take the old version
+        if name not in meta.abstracts and name not in meta.references:
+            meta.fields[name] = {}
+            meta.references[name] = {}
 
             for key, val in dct.items():
                 if isinstance(val, Field):

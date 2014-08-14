@@ -66,28 +66,43 @@ var Root = Backbone.Model.extend({
     url: "/root",
     Collections: {},
     Models: {},
+    defaults: {
+        backoff: 100,
+    },
     initialize: function(){
         var self = this;
         this.all = new Backbone.Model();
+        this.listenToOnce(this, "request", function(model, xhr, options){
+            // Pull out X-Server-UUID header, assert the server doesn't update without us
+            xhr.then(function(){
+                self.set("serverUUID", xhr.getResponseHeader("X-Server-UUID"), {silent: true});
+                $(document).ajaxSuccess(function(ev, xhr){
+                    if(self.get("serverUUID") != xhr.getResponseHeader("X-Server-UUID")){
+                        window.location.reload();
+                    }
+                });
+            });
+        });
         this.listenToOnce(this, "change", function(model, options){
             console.log("first change", model.attributes);
             _.each(model.keys(), function(name){
                 var mdl = self.Models[name] = makeBladeModel(name, model.get(name));
                 self.Collections[name] = makeBladeCollection(name, model.get(name), mdl);
                 self.all.set(name, new self.Collections[name]);
+                self.listenTo(self.all.get(name), "request", self.assertValidUUID);
             });
 
             // Next time the model changes, that's bad!
             this.listenTo(this, "change", function(model, options){
                 // This isn't good!
-                console.log("Uh oh, model changed types!", model);
+                console.log("Uh oh, model changed types!", model, options);
                 Backbone.trigger("typeChange");
                 // Maybe fire an event for the particular attrs that changed?
             });
 
             this.trigger("typesLoaded");
         });
-    }
+    },
 });
 
 
