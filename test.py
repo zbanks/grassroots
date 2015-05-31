@@ -21,4 +21,8 @@ class Timing(Blade):
 if __name__ == "__main__":
     root = Root()
     tm = Timing()
+    print "Open http://localhost:8080/static/index.html in your browser"
+    print "And play with the javascript console..."
+    print "> Timings = root.Collections.Timings;"
+    print "> Timings.fetch();"
     run(root)

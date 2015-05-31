@@ -8,6 +8,7 @@ An ill-advised library for rapidly prototyping python GUI applications in Javasc
 Examples
 --------
 - https://github.com/zbanks/beetle
+- `python test.py` and navigate to http://localhost:8080/static/index.html
 
 Model
 -----
@@ -27,7 +28,7 @@ Functions can be turned into fields with the `@CallableField` decorator.
 ### Javascript
 `grass.js`
 
-A singleton of the `Root` object is exposed as `root`. `root.Collections` contains all the types of classes (blades) exposed over the REST API. `root.Models` contains all of the instance of the given classes.
+A singleton of the `Root` object is exposed as `root`. `root.Collections` contains all the types of classes (blades) exposed over the REST API. 
 
 In general, models extracted from `root` behave like normal Backbone models. They have an additional `.call()` method which provides syntactic sugar for calling methods in Python-land.
 

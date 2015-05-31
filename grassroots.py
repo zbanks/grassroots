@@ -1,15 +1,17 @@
 import collections
 import json
+import logging
 import os
 import uuid
+import weakref
 
-from werkzeug.serving import run_simple
+from werkzeug.exceptions import NotFound
 from werkzeug.routing import Map, Rule
+from werkzeug.serving import run_simple
 from werkzeug.wrappers import Request, Response
 from werkzeug.wsgi import SharedDataMiddleware
 
 __all__ = ("Field", "PropertyField", "CallableField", "JSONField", "Blade", "Root", "run")
-
 #
 # Fields. Expose values & functions over HTTP
 # 
@@ -17,24 +19,25 @@ __all__ = ("Field", "PropertyField", "CallableField", "JSONField", "Blade", "Roo
 class Field(object):
     """Generic property field. Constructor argument is default value"""
     doc = "property"
-    def __init__(self, value=None):
-        self.value = value
+    def __init__(self, default=None):
+        self.default = default
+        self.data = weakref.WeakKeyDictionary()
 
     def __get__(self, obj, objtype=None):
         if obj is None:
             return self
-        return self.value
+        return self.data.get(obj, self.default)
 
     def __set__(self, obj, value):
-        self.value = value
+        self.data[obj] = value
 
     def parse(self, obj, data):
         """Redefine `parse` to change the way the value is deserialized (from JSON)"""
-        self.value = data
+        self.data[obj]= data
 
     def export(self, obj):
         """Redefine `export` to change the way the value is serialized (before being serialized to JSON)"""
-        return self.value
+        return self.data.get(obj, self.default)
 
 class PropertyField(Field):
     """Emulate property() behavior as a field"""
@@ -93,17 +96,17 @@ class CallableField(Field):
     doc = "callable"
     def __init__(self, fn):
         self.value = fn
-        self.retval = None
+        self.retvals = weakref.WeakKeyDictionary()
 
     def parse(self, obj, data=None):
         # Call function on data
         # Save return value for next time it is exported
         if data is None:
-            self.retval = self.value(obj)
+            self.retvals[obj] = self.value(obj)
         elif isinstance(data, list):
-            self.retval = self.value(obj, *data)
+            self.retvals[obj] = self.value(obj, *data)
         elif isinstance(data, dict):
-            self.retval = self.value(obj, **data)
+            self.retvals[obj] = self.value(obj, **data)
         else:
             raise ValueError("Unable to call function. Argument must be a list, a dict, or None")
 
@@ -111,11 +114,35 @@ class CallableField(Field):
         # Export the last return value from the called function
         # This is a little awkward, but it works
         # XXX: Should the retval be destroyed on read?
-        return self.retval
+        return self.retvals.get(obj, None)
 
 class JSONField(Field):
     """Property field that serializes value with JSON."""
     pass
+
+#XXX - DEPRICATED
+class BladeListField(Field):
+    """Field that is a list of Blades of a particular type"""
+    doc = "property-nested"
+    def __init__(self, bladecls):
+        self.bladecls = bladecls
+        self.value = []
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        return self.value
+
+    def __set__(self, obj, value):
+        if not all([type(v).__name__ == self.bladecls for v in value]):
+            raise ValueError
+        self.value = value
+
+    def parse(self, obj, data):
+        self.value = [self.meta.references[self.bladecls][v] for v in data]
+
+    def export(self, obj):
+        return {"__class__": self.bladecls, "__data__": map(id, self.value)}
 
 class BladeMeta(type):
     """Metaclass which keeps track of Fields to expose over HTTP"""
@@ -124,13 +151,14 @@ class BladeMeta(type):
     abstracts = {"Blade"}
 
     def __new__(meta, name, bases, dct):
-        if name not in meta.abstracts:
-            if name not in meta.references:
-                meta.fields[name] = {}
-                meta.references[name] = {}
+        # On reload, only take the old version
+        if name not in meta.abstracts and name not in meta.references:
+            meta.fields[name] = {}
+            meta.references[name] = {}
 
             for key, val in dct.items():
                 if isinstance(val, Field):
+                    val.meta = meta
                     meta.fields[name][key] = val
 
         return super(BladeMeta, meta).__new__(meta, name, bases, dct)
@@ -167,7 +195,10 @@ class Root(object):
         request = Request(environ)
         adapter = self.url_map.bind_to_environ(environ)
         try:
-            endpoint, values = adapter.match()
+            try:
+                endpoint, values = adapter.match()
+            except NotFound:
+                return ""
             try:
                 json_resp = getattr(self, "app_" + endpoint)(request, **values)
             except Exception as e:
@@ -241,6 +272,8 @@ class Root(object):
         return self.dump(classname, cid)
 
 def run(app, host="127.0.0.1", port=8080):
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.CRITICAL)
     app.wsgi_app = SharedDataMiddleware(app.wsgi_app, {
         #'/static': os.path.join(os.path.dirname(__file__), 'static')
         '/static': os.path.abspath('static')
