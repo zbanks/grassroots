@@ -78,7 +78,7 @@ var Root = Backbone.Model.extend({
             // Next time the model changes, that's bad!
             this.listenTo(this, "change", function(model, options){
                 // This isn't good!
-                console.log("Uh oh, model changed types!", model);
+                console.warning("Uh oh, model changed types!", model);
                 Backbone.trigger("typeChange");
                 // Maybe fire an event for the particular attrs that changed?
             });

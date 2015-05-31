@@ -242,8 +242,9 @@ class Root(object):
 
 def run(app, host="127.0.0.1", port=8080):
     app.wsgi_app = SharedDataMiddleware(app.wsgi_app, {
-        '/static': os.path.join(os.path.dirname(__file__), 'static')
+        #'/static': os.path.join(os.path.dirname(__file__), 'static')
+        '/static': os.path.abspath('static')
     })
-    run_simple(host, port, app, use_debugger=True, use_reloader=True)
+    run_simple(host, port, app, use_debugger=True, use_reloader=False)
 
 
